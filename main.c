@@ -1,14 +1,8 @@
 #include <stdio.h>
+#include <string.h>
 #include "pico/stdlib.h"
 #include "hardware/i2c.h"
 #include "lcd_i2c.h"
-
-// I2C defines
-// This example will use I2C0 on GPIO8 (SDA) and GPIO9 (SCL) running at 400KHz.
-// Pins can be changed, see the GPIO function select table in the datasheet for information on GPIO assignments
-#define I2C_PORT i2c0
-#define I2C_SDA 8
-#define I2C_SCL 9
 
 uint8_t chars[] = {
     0b10101,
@@ -92,16 +86,17 @@ int main() {
     lcd_begin(lcd, 0x27, 20, 4, 8);
 
     // Creating characters.
-    for(uint8_t i = 0; i < 8; i++) lcd_create_character(lcd, i, chars + (i*8));
+    lcd_create_all_characters(lcd, 8, chars);
 
     // Displaying stuff.
     char buffer[20*4] = {0};
-    int i = 0;
     char c = 0;
     while (true) {
+        memset(buffer + (0*20), c++, 20);
+        memset(buffer + (1*20), c++, 20);
+        memset(buffer + (2*20), c++, 20);
+        memset(buffer + (3*20), c++, 20);
         lcd_show_buffer(lcd, buffer);
-        buffer[i++] = c++;
-        i %= 20*4;
-        sleep_ms(5);
+        sleep_ms(1000);
     }
 }

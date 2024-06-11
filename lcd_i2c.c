@@ -47,6 +47,8 @@ struct lcd_i2c {
     uint8_t rows;
     uint8_t charheight;
     uint8_t backlightval;
+    uint8_t x;
+    uint8_t y;
 };
 
 void p_display_init(lcd_i2c *lcd);
@@ -55,6 +57,7 @@ void p_write_4b(lcd_i2c *lcd, uint8_t data);
 void p_send(lcd_i2c *lcd, uint8_t data, uint8_t mode);
 void p_command(lcd_i2c *lcd, uint8_t data);
 void p_write(lcd_i2c *lcd, uint8_t data);
+void p_advance_position(lcd_i2c *lcd);
 
 
 lcd_i2c *lcd_setup(i2c_inst_t *i2c, uint baudrate, uint sda, uint scl) {
@@ -90,20 +93,30 @@ void lcd_begin(lcd_i2c *lcd, uint8_t addr, uint8_t cols, uint8_t rows, uint8_t c
     p_display_init(lcd);
 }
 
-void lcd_clear(lcd_i2c* lcd) {
+void lcd_clear(lcd_i2c* lcd, bool sleep) {
     p_command(lcd, LCD_CLEAR_DISPLAY);
-    sleep_us(2000);
+    if(sleep) sleep_us(1520);
 }
 
-void lcd_home(lcd_i2c* lcd) {
+void lcd_home(lcd_i2c* lcd, bool sleep) {
     p_command(lcd, LCD_RETURN_HOME);
-    sleep_us(2000);
+    if(lcd_get_ltr(lcd)) {
+        lcd->x = 0;
+        lcd->y = 0;
+    } else {
+        lcd->x = lcd->cols-1;
+        lcd->y = 0;
+    }
+    if(sleep) sleep_us(1520);
 }
 
 void lcd_set_cursor_location(lcd_i2c* lcd, uint8_t x, uint8_t y) {
-    uint8_t offsets[] = {0x00, 0x40, 0x14, 0x54};
-    if(y > 3) return;
-    p_command(lcd, LCD_SET_DD_RAM_ADDR | (x + offsets[y]));
+    static uint8_t y_offsets[] = {0x00, 0x40, 0x14, 0x54};
+    if(y > 3)  y = 3;
+    if(x > 19) x = 19;
+    p_command(lcd, LCD_SET_DD_RAM_ADDR | (x + y_offsets[y]));
+    lcd->x = x;
+    lcd->y = y;
 }
 
 void lcd_set_display(lcd_i2c* lcd, bool enabled) {
@@ -113,7 +126,7 @@ void lcd_set_display(lcd_i2c* lcd, bool enabled) {
 }
 
 bool lcd_get_display(lcd_i2c* lcd) {
-    return lcd->displaycontrol & LCD_DISPLAY_ON == LCD_DISPLAY_ON;
+    return (lcd->displaycontrol & LCD_DISPLAY_ON) == LCD_DISPLAY_ON;
 }
 
 void lcd_set_cursor(lcd_i2c* lcd, bool enabled) {
@@ -123,7 +136,7 @@ void lcd_set_cursor(lcd_i2c* lcd, bool enabled) {
 }
 
 bool lcd_get_cursor(lcd_i2c* lcd) {
-    return lcd->displaycontrol & LCD_CURSOR_ON == LCD_CURSOR_ON;
+    return (lcd->displaycontrol & LCD_CURSOR_ON) == LCD_CURSOR_ON;
 }
 
 void lcd_set_blink(lcd_i2c* lcd, bool enabled) {
@@ -133,7 +146,7 @@ void lcd_set_blink(lcd_i2c* lcd, bool enabled) {
 }
 
 bool lcd_get_blink(lcd_i2c* lcd) {
-    return lcd->displaycontrol & LCD_BLINK_ON == LCD_BLINK_ON;
+    return (lcd->displaycontrol & LCD_BLINK_ON) == LCD_BLINK_ON;
 }
 
 void lcd_set_ltr(lcd_i2c* lcd) {
@@ -142,7 +155,7 @@ void lcd_set_ltr(lcd_i2c* lcd) {
 }
 
 bool lcd_get_ltr(lcd_i2c* lcd) {
-    return lcd->displaymode & LCD_ENTRY_LEFT == LCD_ENTRY_LEFT;
+    return (lcd->displaymode & LCD_ENTRY_LEFT) == LCD_ENTRY_LEFT;
 }
 
 void lcd_set_rtl(lcd_i2c* lcd) {
@@ -151,7 +164,7 @@ void lcd_set_rtl(lcd_i2c* lcd) {
 }
 
 bool lcd_get_rtl(lcd_i2c* lcd) {
-    return lcd->displaymode & LCD_ENTRY_LEFT != LCD_ENTRY_LEFT;
+    return (lcd->displaymode & LCD_ENTRY_LEFT) != LCD_ENTRY_LEFT;
 }
 
 void lcd_set_autoscroll(lcd_i2c* lcd, bool enabled) {
@@ -161,7 +174,7 @@ void lcd_set_autoscroll(lcd_i2c* lcd, bool enabled) {
 }
 
 bool lcd_get_autoscroll(lcd_i2c* lcd) {
-    return lcd->displaymode & LCD_ENTRY_SHIFT_INCREMENT == LCD_ENTRY_SHIFT_INCREMENT;
+    return (lcd->displaymode & LCD_ENTRY_SHIFT_INCREMENT) == LCD_ENTRY_SHIFT_INCREMENT;
 }
 
 void lcd_set_backlight(lcd_i2c* lcd, bool enabled) {
@@ -188,20 +201,40 @@ void lcd_scroll_x(lcd_i2c* lcd, int8_t amount) {
 void lcd_create_character(lcd_i2c* lcd, uint8_t location, uint8_t data[]) {
     if(location > 7) return;
     p_command(lcd, LCD_SET_CG_RAM_ADDR | (location << 3));
-    for(uint8_t i = 0; i < 8; i++) p_write(lcd, data[i]);
+    for(uint8_t i = 0; i < (lcd->charheight == LCD_10_HEIGHT ? 10 : 8); i++) p_write(lcd, data[i]);
+    lcd_set_cursor_location(lcd, lcd->x, lcd->y);
+}
+
+void lcd_create_all_characters(lcd_i2c* lcd, uint8_t characters, uint8_t data[]) {
+    p_command(lcd, LCD_SET_CG_RAM_ADDR);
+    for(uint8_t i = 0; i < ((lcd->charheight == LCD_10_HEIGHT ? 10 : 8)*characters); i++) p_write(lcd, data[i]);
+    lcd_set_cursor_location(lcd, lcd->x, lcd->y);
 }
 
 void lcd_print(lcd_i2c* lcd, const char* str) {
-    for(size_t i = 0; str[i] != '\0'; i++) p_write(lcd, str[i]);
+    for(size_t i = 0; str[i] != '\0'; i++) {
+        p_write(lcd, str[i]);
+        p_advance_position(lcd);
+    }
 }
 
 void lcd_print_s(lcd_i2c* lcd, const char* str, size_t length) {
-    for(size_t i = 0; i < length; i++) p_write(lcd, str[i]);
+    for(size_t i = 0; i < length; i++) {
+        p_write(lcd, str[i]);
+        p_advance_position(lcd);
+    }
+}
+
+void lcd_print_c(lcd_i2c* lcd, char c) {
+    p_write(lcd, c);
+    p_advance_position(lcd);
 }
 
 void lcd_show_buffer(lcd_i2c* lcd, const char* buffer) {
     if(!lcd_get_ltr(lcd)) lcd_set_ltr(lcd);
     if(lcd_get_autoscroll(lcd)) lcd_set_autoscroll(lcd, false);
+    if(lcd_get_cursor(lcd)) lcd_set_cursor(lcd, false);
+    if(lcd_get_blink(lcd)) lcd_set_blink(lcd, false);
     size_t i = 0;
     for(size_t y = 0; y < lcd->rows; y++) {
         lcd_set_cursor_location(lcd, 0, y);
@@ -209,6 +242,8 @@ void lcd_show_buffer(lcd_i2c* lcd, const char* buffer) {
             p_write(lcd, buffer[i++]);
         }
     }
+    lcd->x = 0;
+    lcd->y = 0;
 }
 
 void p_display_init(lcd_i2c *lcd) {    
@@ -246,8 +281,8 @@ void p_display_init(lcd_i2c *lcd) {
     p_command(lcd, LCD_ENTRY_MODE_SET | lcd->displaymode);
 
     // Clear the display.
-    lcd_clear(lcd);
-    lcd_home(lcd);
+    lcd_clear(lcd, true);
+    lcd_home(lcd, true);
 }
 
 int p_write_raw(lcd_i2c *lcd, uint8_t data) {
@@ -279,4 +314,24 @@ void p_command(lcd_i2c *lcd, uint8_t data) {
 
 void p_write(lcd_i2c *lcd, uint8_t data) {
     p_send(lcd, data, RS_B);
+}
+
+void p_advance_position(lcd_i2c* lcd) {
+    if(lcd_get_ltr(lcd)) {
+        lcd->x++;
+        lcd->x %= lcd->cols;
+        if(lcd->x == 0) {
+            lcd->y++;
+            lcd->y %= lcd->rows;
+            if(lcd->rows > 2) lcd_set_cursor_location(lcd, lcd->x, lcd->y);
+        }
+    } else {
+        lcd->x--;
+        if(lcd->x == 255) {
+            lcd->x = lcd->cols-1;
+            lcd->y++;
+            lcd->y %= lcd->rows;
+            if(lcd->rows > 2) lcd_set_cursor_location(lcd, lcd->x, lcd->y);
+        }
+    }
 }
